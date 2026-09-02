@@ -29,7 +29,6 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
     private static final String SYSTEM_USER = "SYSTEM";
 
     private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-    private final IngestionSummaryQueryBuilder queryBuilder;
 
     /**
      * Inserts or updates the {@code last_successful_date} and {@code last_attempted_date}
@@ -56,7 +55,7 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
                     .addValue(DashboardExtractorConstants.PARAM_CREATED_TIME, now)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_BY, SYSTEM_USER)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_TIME, now);
-            namedParameterJdbcTemplate.update(queryBuilder.getUpsertLastSuccessfulDateQuery(), params);
+            namedParameterJdbcTemplate.update(IngestionSummaryQueryBuilder.UPSERT_LAST_SUCCESSFUL_DATE_QUERY, params);
 
             log.info("Saved last_successful_date to {} for tenant {} module {}",
                     successfulDate, tenantId, moduleName);
@@ -92,7 +91,7 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
                     .addValue(DashboardExtractorConstants.PARAM_CREATED_TIME, now)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_BY, SYSTEM_USER)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_TIME, now);
-            namedParameterJdbcTemplate.update(queryBuilder.getUpsertLastAttemptedDateQuery(), params);
+            namedParameterJdbcTemplate.update(IngestionSummaryQueryBuilder.UPSERT_LAST_ATTEMPTED_DATE_QUERY, params);
 
             log.info("Saved last_attempted_date to {} for tenant {} module {}",
                     attemptedDate, tenantId, moduleName);
@@ -135,7 +134,7 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
                     .addValue(DashboardExtractorConstants.PARAM_CREATED_TIME, now)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_BY, SYSTEM_USER)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_TIME, now);
-            namedParameterJdbcTemplate.update(queryBuilder.getInsertLegacyJobQuery(), params);
+            namedParameterJdbcTemplate.update(IngestionSummaryQueryBuilder.INSERT_LEGACY_JOB_QUERY, params);
 
             log.debug("Inserted legacy job {} for tenant {} module {} range [{} to {}]", id, tenantId, moduleName, sDate, eDate);
         } catch (Exception exception) {
@@ -163,7 +162,7 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
                     .addValue(DashboardExtractorConstants.PARAM_RESPONSE_DATA, responseData)
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_TIME, now)
                     .addValue(DashboardExtractorConstants.PARAM_ID, jobId);
-            namedParameterJdbcTemplate.update(queryBuilder.getUpdateLegacyJobStatusQuery(), params);
+            namedParameterJdbcTemplate.update(IngestionSummaryQueryBuilder.UPDATE_LEGACY_JOB_STATUS_QUERY, params);
 
             log.info("Updated legacy job {} to status {}", jobId, status);
         } catch (Exception exception) {
@@ -182,9 +181,35 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
             if (details == null || details.isEmpty()) {
                 return;
             }
+            MapSqlParameterSource[] batchParams = new MapSqlParameterSource[details.size()];
+            java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern(DashboardExtractorConstants.DATE_FORMAT);
+
+            for (int i = 0; i < details.size(); i++) {
+                Object item = details.get(i);
+                if (item instanceof org.upyog.dashboard.entity.DailyIngestionData d) {
+                    LocalDate pushDate = (d.getPushDate() != null) ? LocalDate.parse(d.getPushDate(), formatter) : LocalDate.now();
+                    batchParams[i] = new MapSqlParameterSource()
+                            .addValue("moduleIngestionId", (d.getModuleIngestionId() != null) ? d.getModuleIngestionId() : CommonUtils.generateUUID())
+                            .addValue("moduleDetailId", d.getModuleDetailId())
+                            .addValue("tenantId", d.getTenantId())
+                            .addValue("moduleName", d.getModuleName())
+                            .addValue("pushDate", Date.valueOf(pushDate))
+                            .addValue("requestData", d.getRequestData())
+                            .addValue("responseData", d.getResponseData())
+                            .addValue("ingestionStatus", d.getIngestionStatus())
+                            .addValue("exceptionCode", null)
+                            .addValue("createdBy", (d.getCreatedBy() != null) ? d.getCreatedBy() : SYSTEM_USER)
+                            .addValue("createdTime", (d.getCreatedTime() != null) ? d.getCreatedTime() : CommonUtils.getCurrentEpochMillis())
+                            .addValue("lastModifiedBy", (d.getLastModifiedBy() != null) ? d.getLastModifiedBy() : SYSTEM_USER)
+                            .addValue("lastModifiedTime", (d.getLastModifiedTime() != null) ? d.getLastModifiedTime() : CommonUtils.getCurrentEpochMillis());
+                }
+            }
+
+            namedParameterJdbcTemplate.batchUpdate(IngestionSummaryQueryBuilder.INSERT_INGESTION_DETAIL_QUERY, batchParams);
             log.info("JDBC batch insert processed for {} ingestion detail audit records", details.size());
         } catch (Exception exception) {
             log.error("Failed JDBC batch insert for ingestion detail audit records", exception);
         }
     }
 }
+

@@ -19,6 +19,7 @@ public enum IngestionStatus {
     FAILURE(DashboardExtractorConstants.STATUS_FAILURE, false),
     SUCCESS_ZERO_METRICS("SUCCESS_ZERO_METRICS", true),
     SUCCESS_DUPLICATE("SUCCESS_DUPLICATE", true),
+    MISSED_DATE("MISSED_DATE", false),
     SKIPPED("SKIPPED", false),
     UNKNOWN("UNKNOWN", false);
 
