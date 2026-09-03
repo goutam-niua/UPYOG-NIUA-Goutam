@@ -23,11 +23,23 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 @EnableSchedulerLock(defaultLockAtMostFor = "PT30M")
 public class ShedLockConfig {
 
+    /**
+     * Creates and registers the {@link NamedParameterJdbcTemplate} bean backed by the application's primary DataSource.
+     *
+     * @param dataSource the configured primary database {@link DataSource}
+     * @return the initialized {@link NamedParameterJdbcTemplate}
+     */
     @Bean
     public NamedParameterJdbcTemplate namedParameterJdbcTemplate(DataSource dataSource) {
         return new NamedParameterJdbcTemplate(dataSource);
     }
 
+    /**
+     * Creates and registers the ShedLock {@link LockProvider} bean backed by JDBC template.
+     *
+     * @param dataSource the configured primary database {@link DataSource}
+     * @return the initialized {@link LockProvider} for distributed scheduler locking
+     */
     @Bean
     public LockProvider lockProvider(DataSource dataSource) {
         return new JdbcTemplateLockProvider(dataSource);

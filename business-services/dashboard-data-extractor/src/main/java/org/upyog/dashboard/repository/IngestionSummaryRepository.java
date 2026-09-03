@@ -47,7 +47,7 @@ public Optional<LocalDate> findLastSuccessfulDate(String tenantId, String module
 					.addValue(DashboardExtractorConstants.PARAM_TENANT_ID, tenantId)
 					.addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName);
 			List<Date> dates = namedParameterJdbcTemplate.query(IngestionSummaryQueryBuilder.SELECT_LAST_SUCCESSFUL_DATE_QUERY,
-					params, (rs, rowNum) -> rs.getDate("last_successful_date"));
+					params, (resultSet, rowNumber) -> resultSet.getDate("last_successful_date"));
 
 			return dates.stream().filter(Objects::nonNull).map(Date::toLocalDate)
 					.filter(date -> !date.equals(LocalDate.EPOCH)) // Ignores 1970-01-01
@@ -77,18 +77,18 @@ public java.util.Set<LocalDate> findSuccessfullyIngestedDates(String tenantId, S
 			LocalDate startDate, LocalDate endDate) {
 		java.util.Set<LocalDate> result = new java.util.HashSet<>();
 		try {
-			Date sDate = Date.valueOf(startDate);
-			Date eDate = Date.valueOf(endDate);
+			Date sqlStartDate = Date.valueOf(startDate);
+			Date sqlEndDate = Date.valueOf(endDate);
 			MapSqlParameterSource params = new MapSqlParameterSource()
 					.addValue(DashboardExtractorConstants.PARAM_TENANT_ID, tenantId)
 					.addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName)
-					.addValue(DashboardExtractorConstants.PARAM_START_DATE, sDate)
-					.addValue(DashboardExtractorConstants.PARAM_END_DATE, eDate);
+					.addValue(DashboardExtractorConstants.PARAM_START_DATE, sqlStartDate)
+					.addValue(DashboardExtractorConstants.PARAM_END_DATE, sqlEndDate);
 			List<Date> dates = namedParameterJdbcTemplate.query(IngestionSummaryQueryBuilder.SELECT_SUCCESSFUL_DATES_IN_RANGE_QUERY,
-					params, (rs, rowNum) -> rs.getDate("push_date"));
-			for (Date d : dates) {
-				if (d != null) {
-					result.add(d.toLocalDate());
+					params, (resultSet, rowNumber) -> resultSet.getDate("push_date"));
+			for (Date sqlDate : dates) {
+				if (sqlDate != null) {
+					result.add(sqlDate.toLocalDate());
 				}
 			}
 		} catch (Exception exception) {
@@ -113,7 +113,7 @@ public java.util.Set<LocalDate> findSuccessfullyIngestedDates(String tenantId, S
 					.addValue(DashboardExtractorConstants.PARAM_TENANT_ID, tenantId)
 					.addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName);
 			String sql = "SELECT is_legacy_data_ingested FROM ingestion_module_detail WHERE tenant_id = :tenantId AND module_name = :moduleName";
-			List<Boolean> flags = namedParameterJdbcTemplate.query(sql, params, (rs, rowNum) -> rs.getBoolean("is_legacy_data_ingested"));
+			List<Boolean> flags = namedParameterJdbcTemplate.query(sql, params, (resultSet, rowNumber) -> resultSet.getBoolean("is_legacy_data_ingested"));
 			return !flags.isEmpty() && Boolean.TRUE.equals(flags.get(0));
 		} catch (Exception exception) {
 			log.error("IngestionSummaryRepository | Failed to check isLegacyIngestionComplete for tenant {} module {}", tenantId, moduleName, exception);
@@ -189,10 +189,10 @@ public Set<LocalDate> findRegisteredLegacyJobDates(String tenantId, String modul
 					.addValue(DashboardExtractorConstants.PARAM_TENANT_ID, tenantId)
 					.addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName);
 			List<Date> results = namedParameterJdbcTemplate.query(IngestionSummaryQueryBuilder.SELECT_LEGACY_JOB_DATES_QUERY,
-					params, (rs, rowNum) -> rs.getDate("push_date"));
-			for (Date d : results) {
-				if (d != null) {
-					dates.add(d.toLocalDate());
+					params, (resultSet, rowNumber) -> resultSet.getDate("push_date"));
+			for (Date resultDate : results) {
+				if (resultDate != null) {
+					dates.add(resultDate.toLocalDate());
 				}
 			}
 		} catch (Exception exception) {
@@ -219,12 +219,12 @@ public Set<LocalDate> findRegisteredLegacyJobDates(String tenantId, String modul
 					.addValue(DashboardExtractorConstants.PARAM_START_DATE, Date.valueOf(startDate))
 					.addValue(DashboardExtractorConstants.PARAM_END_DATE, Date.valueOf(endDate));
 			return namedParameterJdbcTemplate.query(IngestionSummaryQueryBuilder.SELECT_OVERLAPPING_SUCCESSFUL_LEGACY_JOBS_QUERY,
-					params, (rs, rowNum) -> {
-						Date sDate = rs.getDate("start_date");
-						Date eDate = rs.getDate("end_date");
-						Date pDate = rs.getDate("push_date");
-						LocalDate start = (sDate != null) ? sDate.toLocalDate() : (pDate != null ? pDate.toLocalDate() : null);
-						return new LegacyJob(rs.getString("module_ingestion_id"), start);
+					params, (resultSet, rowNumber) -> {
+						Date sqlStartDate = resultSet.getDate("start_date");
+						Date sqlEndDate = resultSet.getDate("end_date");
+						Date sqlPushDate = resultSet.getDate("push_date");
+						LocalDate start = (sqlStartDate != null) ? sqlStartDate.toLocalDate() : (sqlPushDate != null ? sqlPushDate.toLocalDate() : null);
+						return new LegacyJob(resultSet.getString("module_ingestion_id"), start);
 					});
 		} catch (Exception exception) {
 			log.error("IngestionSummaryRepository | Failed to query overlapping legacy jobs for tenant {} module {} range [{} to {}]",
@@ -301,8 +301,8 @@ public List<LegacyJob> findPendingOrFailedLegacyJobs(String tenantId, String mod
 					.addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName)
 					.addValue(DashboardExtractorConstants.PARAM_LIMIT, limit);
 			return namedParameterJdbcTemplate.query(IngestionSummaryQueryBuilder.SELECT_PENDING_OR_FAILED_LEGACY_JOBS_QUERY,
-					params, (rs, rowNum) -> new LegacyJob(rs.getString("module_ingestion_id"),
-							rs.getDate("push_date").toLocalDate()));
+					params, (resultSet, rowNumber) -> new LegacyJob(resultSet.getString("module_ingestion_id"),
+							resultSet.getDate("push_date").toLocalDate()));
 		} catch (Exception exception) {
 			log.error("IngestionSummaryRepository | Failed to fetch pending/failed legacy jobs for tenant {} module {}",
 					tenantId, moduleName, exception);

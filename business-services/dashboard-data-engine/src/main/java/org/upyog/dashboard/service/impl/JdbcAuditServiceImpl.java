@@ -19,6 +19,9 @@ import org.upyog.dashboard.model.DashboardPayload;
 import org.upyog.dashboard.service.AuditService;
 import org.upyog.dashboard.util.JsonUtil;
 
+/**
+ * JDBC implementation of {@link AuditService} directly persisting ingestion and error audit records to PostgreSQL tables.
+ */
 @Service
 @ConditionalOnProperty(name = "dashboard-data.persister.enabled", havingValue = "false")
 public class JdbcAuditServiceImpl implements AuditService {

@@ -23,6 +23,9 @@ import org.upyog.dashboard.producer.DashboardProducer;
 import org.upyog.dashboard.service.AuditService;
 import org.upyog.dashboard.util.JsonUtil;
 
+/**
+ * Kafka implementation of {@link AuditService} publishing ingestion and error audit records to Kafka topics.
+ */
 @Service
 @ConditionalOnProperty(name = "dashboard-data.persister.enabled", havingValue = "true", matchIfMissing = true)
 public class KafkaAuditServiceImpl implements AuditService {

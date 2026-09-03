@@ -39,12 +39,13 @@ import java.util.LinkedHashMap;
 /**
  * Orchestrator handling the heavy-duty manual legacy batch ingestion processes.
  * <p>
- * This service manages memory-safe streaming of large historical datasets, dynamically routing them
- * either directly to the internal API or uploading physical chunked files to the egov-filestore based on configuration.
- * It strictly enforces concurrency via ShedLock to prevent memory exhaustion from overlapping batch requests.
+ * This service manages memory-safe streaming of large historical datasets,
+ * dynamically routing them either directly to the internal API or uploading
+ * physical chunked files to the egov-filestore based on configuration. It
+ * strictly enforces concurrency via ShedLock to prevent memory exhaustion from
+ * overlapping batch requests.
  * </p>
  */
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -67,10 +68,12 @@ public class LegacyBatchIngestionOrchestrator {
     private boolean keepExcelFile;
 
     /**
-     * Executes legacy extraction into a single Excel file by streaming DB batches incrementally,
-     * then posts the generated Excel file to the legacy API endpoint.
+     * Executes legacy extraction into a single Excel file by streaming DB
+     * batches incrementally, then posts the generated Excel file to the legacy
+     * API endpoint.
      *
-     * @param request legacy batch request containing startDate, endDate, and moduleName
+     * @param request legacy batch request containing startDate, endDate, and
+     * moduleName
      * @return LegacyIngestionResponse summarizing execution outcome
      */
     public LegacyIngestionResponse processLegacyBatchIngest(LegacyBatchIngestRequest request) {
@@ -119,9 +122,9 @@ public class LegacyBatchIngestionOrchestrator {
 
         String lockName = "manual_batch_extraction_" + moduleName.toUpperCase();
         LockConfiguration lockConfig = new LockConfiguration(
-                Instant.now(), 
-                lockName, 
-                Duration.ofHours(3), 
+                Instant.now(),
+                lockName,
+                Duration.ofHours(3),
                 Duration.ofMinutes(1)
         );
 
@@ -144,12 +147,14 @@ public class LegacyBatchIngestionOrchestrator {
         File generatedExcelFile = null;
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern(DashboardExtractorConstants.DATE_FORMAT);
 
-        // Map tracking per-date candidate status and sample request data
+        // Map tracking per-date candidate status and sample request data across the requested date range
         Map<LocalDate, DateCandidateAudit> dateAuditMap = new LinkedHashMap<>();
-        LocalDate cur = start;
-        while (!cur.isAfter(end)) {
-            dateAuditMap.put(cur, new DateCandidateAudit(IngestionStatus.MISSED_DATE.getValue(), null, tenantId));
-            cur = cur.plusDays(1);
+        LocalDate currentDate = start;
+        while (!currentDate.isAfter(end)) {
+            // Initialize every date in the requested range with default MISSED_DATE status;
+            // if records are discovered during DB extraction, the status will be upgraded accordingly.
+            dateAuditMap.put(currentDate, new DateCandidateAudit(IngestionStatus.MISSED_DATE.getValue(), null, tenantId));
+            currentDate = currentDate.plusDays(1);
         }
 
         try (SXSSFExcelGeneratorService.StreamingExcelSession session = excelGeneratorService.createStreamingSession(moduleName)) {
@@ -157,44 +162,61 @@ public class LegacyBatchIngestionOrchestrator {
             Module module = Module.valueOf(moduleName.toUpperCase());
             ModuleExtractor<?> extractor = extractorRegistry != null ? extractorRegistry.get(module) : null;
 
+            if (extractor == null) {
+                log.error("Extractor missing for module {}", module);
+                return LegacyIngestionResponse.builder()
+                        .totalDatesRequested(0)
+                        .datesFailed(1)
+                        .processedResults(List.of(IngestionResult.builder()
+                                .ingestionStatus(DashboardExtractorConstants.STATUS_FAILURE)
+                                .failureReason("Extractor missing for module " + module)
+                                .build()))
+                        .build();
+            }
             // Step 1: Extractor queries DB date-by-date and streams rows directly to single Excel session
             long totalExtracted = batchExtractor.extractInBatches(module, start, end, tenantId, batchSize, batchRecords -> {
                 List<Object> nonZeroRecords = new ArrayList<>();
 
                 // Analyze records to determine candidate date status and filter non-zero records for Excel
-                for (Object rec : batchRecords) {
-                    LocalDate recordDate = extractDateFromRecord(rec);
-                    boolean isZero = isRecordZeroMetrics(extractor, rec);
+                for (Object record : batchRecords) {
+                    LocalDate recordDate = extractDateFromRecord(record);
+                    boolean isZero = isRecordZeroMetrics(extractor, record);
 
+                    // Zero-metric records are filtered out so that Excel only contains rows with meaningful data
                     if (!isZero) {
-                        nonZeroRecords.add(rec);
+                        nonZeroRecords.add(record);
                     }
 
+                    // Check if the record's date belongs to the requested date range audit map
                     if (recordDate != null && dateAuditMap.containsKey(recordDate)) {
                         DateCandidateAudit candidate = dateAuditMap.get(recordDate);
                         String candidateStatus = isZero ? IngestionStatus.SUCCESS_ZERO_METRICS.getValue() : IngestionStatus.SUCCESS.getValue();
-                        
-                        // If previously MISSED_DATE or SUCCESS_ZERO_METRICS, upgrade if non-zero data found
-                        if (IngestionStatus.MISSED_DATE.getValue().equals(candidate.status) ||
-                                (IngestionStatus.SUCCESS_ZERO_METRICS.getValue().equals(candidate.status) && !isZero)) {
+
+                        // If previously marked as MISSED_DATE or SUCCESS_ZERO_METRICS, upgrade to SUCCESS if non-zero data is found for this date
+                        if (IngestionStatus.MISSED_DATE.getValue().equals(candidate.status)
+                                || (IngestionStatus.SUCCESS_ZERO_METRICS.getValue().equals(candidate.status) && !isZero)) {
                             candidate.status = candidateStatus;
                         }
 
+                        // Store sample request JSON from the first available record for this date for audit persistence
                         if (candidate.samplePayloadJson == null) {
                             try {
-                                candidate.samplePayloadJson = objectMapper != null ? objectMapper.writeValueAsString(rec) : rec.toString();
-                            } catch (Exception e) {
-                                candidate.samplePayloadJson = rec.toString();
+                                candidate.samplePayloadJson = objectMapper != null ? objectMapper.writeValueAsString(record) : record.toString();
+                            } catch (Exception serializationException) {
+                                log.error("Failed to serialize sample payload record for module {}: {}", moduleName, serializationException.getMessage());
+                                candidate.samplePayloadJson = record.toString();
                             }
                         }
 
-                        String recTenant = extractTenantId(rec, tenantId);
-                        if (recTenant != null) {
-                            candidate.tenantId = recTenant;
+                        // Extract tenant ID specific to the record (e.g. ULB) to record the precise tenant hierarchy in audit logs
+                        String recordTenantId = extractTenantId(record, tenantId);
+                        if (recordTenantId != null) {
+                            candidate.tenantId = recordTenantId;
                         }
                     }
                 }
 
+                // If non-zero records are present in this batch chunk, append them to the streaming Excel session
                 if (!nonZeroRecords.isEmpty()) {
                     log.info("Streaming DB batch chunk of {} non-zero records to Excel file session (skipped {} zero-metric records)...",
                             nonZeroRecords.size(), batchRecords.size() - nonZeroRecords.size());
@@ -209,7 +231,10 @@ public class LegacyBatchIngestionOrchestrator {
                 String emptyResponse = "{\"message\": \"No records found for specified date range\"}";
                 persistenceService.updateLegacyJobStatus(jobId, DashboardExtractorConstants.STATUS_SUCCESS, null, emptyResponse);
 
-                // Persist MISSED_DATE audit entries in ingestion_detail
+                // When totalExtracted is 0 (or for any specific calendar date where no data/activity existed in the DB),
+                // MISSED_DATE audit entries are persisted into the ingestion_detail table.
+                // This explicitly records that the pipeline attempted extraction for that date but found no business transactions/rows,
+                // differentiating an empty/inactive date from an extraction failure or an unattempted run.
                 persistDateWiseAudits(dateAuditMap, moduleName, emptyResponse, false);
 
                 return LegacyIngestionResponse.builder()
@@ -233,8 +258,8 @@ public class LegacyBatchIngestionOrchestrator {
             IngestionResult ingestionResult = ingestionClient.ingest(generatedExcelFile, moduleName, tenantId, legacyMode);
 
             boolean isSuccess = DashboardExtractorConstants.STATUS_SUCCESS.equalsIgnoreCase(ingestionResult.getIngestionStatus());
-            String responseJson = ingestionResult.getResponseData() != null 
-                    ? ingestionResult.getResponseData() 
+            String responseJson = ingestionResult.getResponseData() != null
+                    ? ingestionResult.getResponseData()
                     : "{\"failureReason\": \"" + (ingestionResult.getFailureReason() != null ? ingestionResult.getFailureReason().replace("\"", "'") : "Unknown Error") + "\"}";
 
             // Persist the status and fileStoreId into legacy_data_ingestion_detail
@@ -282,6 +307,17 @@ public class LegacyBatchIngestionOrchestrator {
         }
     }
 
+    /**
+     * Persists per-date audit entries into the ingestion_detail table for every
+     * individual day in the legacy batch range, reflecting whether each date
+     * was SUCCESS, MISSED_DATE, or FAILURE.
+     *
+     * @param dateAuditMap tracking map of candidate statuses per date
+     * @param moduleName module short code
+     * @param responseData JSON response received from upstream or error details
+     * @param overallSuccess boolean flag indicating if the overall batch
+     * succeeded
+     */
     private void persistDateWiseAudits(Map<LocalDate, DateCandidateAudit> dateAuditMap, String moduleName, String responseData, boolean overallSuccess) {
         if (dateAuditMap == null || dateAuditMap.isEmpty()) {
             return;
@@ -322,19 +358,30 @@ public class LegacyBatchIngestionOrchestrator {
         persistenceService.saveIngestionDetailsBatch(auditRecords);
     }
 
+    /**
+     * Dynamically extracts the business {@link LocalDate} from a generic record
+     * object using reflection.
+     *
+     * @param item the extracted record object
+     * @return parsed LocalDate or null if not extractable
+     */
     private LocalDate extractDateFromRecord(Object item) {
-        if (item == null) return null;
+        if (item == null) {
+            return null;
+        }
         try {
             java.lang.reflect.Method getDateMethod = item.getClass().getMethod("getDate");
-            Object val = getDateMethod.invoke(item);
-            if (val != null) {
-                if (val instanceof LocalDate ld) return ld;
-                if (val instanceof String s && !s.isBlank()) {
-                    String str = s.trim();
+            Object dateValue = getDateMethod.invoke(item);
+            if (dateValue != null) {
+                if (dateValue instanceof LocalDate localDate) {
+                    return localDate;
+                }
+                if (dateValue instanceof String dateString && !dateString.isBlank()) {
+                    String trimmedDate = dateString.trim();
                     try {
-                        return LocalDate.parse(str);
-                    } catch (Exception e) {
-                        return LocalDate.parse(str, DateTimeFormatter.ofPattern(DashboardExtractorConstants.DATE_FORMAT));
+                        return LocalDate.parse(trimmedDate);
+                    } catch (Exception parseException) {
+                        return LocalDate.parse(trimmedDate, DateTimeFormatter.ofPattern(DashboardExtractorConstants.DATE_FORMAT));
                     }
                 }
             }
@@ -343,25 +390,49 @@ public class LegacyBatchIngestionOrchestrator {
         return null;
     }
 
+    /**
+     * Dynamically extracts the tenant ID or ULB from a generic record object
+     * using reflection.
+     *
+     * @param item the extracted record object
+     * @param fallback default tenant ID to return if extraction fails
+     * @return resolved tenant ID string
+     */
     private String extractTenantId(Object item, String fallback) {
-        if (item == null) return fallback;
+        if (item == null) {
+            return fallback;
+        }
         try {
             java.lang.reflect.Method getUlb = item.getClass().getMethod("getUlb");
             Object val = getUlb.invoke(item);
-            if (val != null && !val.toString().isBlank()) return val.toString();
+            if (val != null && !val.toString().isBlank()) {
+                return val.toString();
+            }
         } catch (Exception ignored) {
         }
         try {
             java.lang.reflect.Method getTenantId = item.getClass().getMethod("getTenantId");
             Object val = getTenantId.invoke(item);
-            if (val != null && !val.toString().isBlank()) return val.toString();
+            if (val != null && !val.toString().isBlank()) {
+                return val.toString();
+            }
         } catch (Exception ignored) {
         }
         return fallback;
     }
 
+    /**
+     * Evaluates if a given extracted record has all zero metric values by
+     * delegating to the extractor.
+     *
+     * @param extractor module extractor capable of evaluating record metrics
+     * @param item extracted record object
+     * @return true if all metrics are zero, false otherwise
+     */
     private boolean isRecordZeroMetrics(ModuleExtractor<?> extractor, Object item) {
-        if (item == null) return true;
+        if (item == null) {
+            return true;
+        }
         if (extractor != null) {
             return extractor.isZeroMetrics(item);
         }
@@ -369,10 +440,18 @@ public class LegacyBatchIngestionOrchestrator {
     }
 
     private static class DateCandidateAudit {
+
         String status;
         String samplePayloadJson;
         String tenantId;
 
+        /**
+         * Constructs a candidate date audit model.
+         *
+         * @param status candidate ingestion status
+         * @param samplePayloadJson sample request JSON payload
+         * @param tenantId tenant identifier
+         */
         DateCandidateAudit(String status, String samplePayloadJson, String tenantId) {
             this.status = status;
             this.samplePayloadJson = samplePayloadJson;
@@ -380,4 +459,3 @@ public class LegacyBatchIngestionOrchestrator {
         }
     }
 }
-

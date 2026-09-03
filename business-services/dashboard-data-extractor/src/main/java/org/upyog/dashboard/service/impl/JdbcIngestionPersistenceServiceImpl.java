@@ -116,18 +116,18 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
     public void createLegacyJob(String jobId, String tenantId, String moduleName, LocalDate pushDate, LocalDate startDate, LocalDate endDate) {
         try {
             long now = CommonUtils.getCurrentEpochMillis();
-            String id = (jobId != null) ? jobId : CommonUtils.generateUUID();
-            LocalDate pDate = (pushDate != null) ? pushDate : (startDate != null ? startDate : LocalDate.now());
-            LocalDate sDate = (startDate != null) ? startDate : pDate;
-            LocalDate eDate = (endDate != null) ? endDate : pDate;
+            String legacyJobId = (jobId != null) ? jobId : CommonUtils.generateUUID();
+            LocalDate effectivePushDate = (pushDate != null) ? pushDate : (startDate != null ? startDate : LocalDate.now());
+            LocalDate effectiveStartDate = (startDate != null) ? startDate : effectivePushDate;
+            LocalDate effectiveEndDate = (endDate != null) ? endDate : effectivePushDate;
             
             MapSqlParameterSource params = new MapSqlParameterSource()
-                    .addValue(DashboardExtractorConstants.PARAM_ID, id)
+                    .addValue(DashboardExtractorConstants.PARAM_ID, legacyJobId)
                     .addValue(DashboardExtractorConstants.PARAM_TENANT_ID, tenantId)
                     .addValue(DashboardExtractorConstants.PARAM_MODULE_NAME, moduleName)
-                    .addValue(DashboardExtractorConstants.PARAM_PUSH_DATE, Date.valueOf(pDate))
-                    .addValue(DashboardExtractorConstants.PARAM_START_DATE, Date.valueOf(sDate))
-                    .addValue(DashboardExtractorConstants.PARAM_END_DATE, Date.valueOf(eDate))
+                    .addValue(DashboardExtractorConstants.PARAM_PUSH_DATE, Date.valueOf(effectivePushDate))
+                    .addValue(DashboardExtractorConstants.PARAM_START_DATE, Date.valueOf(effectiveStartDate))
+                    .addValue(DashboardExtractorConstants.PARAM_END_DATE, Date.valueOf(effectiveEndDate))
                     .addValue(DashboardExtractorConstants.PARAM_STATUS, DashboardExtractorConstants.STATUS_NOT_STARTED)
                     .addValue(DashboardExtractorConstants.PARAM_EXCEPTION_CODE, null)
                     .addValue(DashboardExtractorConstants.PARAM_CREATED_BY, SYSTEM_USER)
@@ -136,7 +136,7 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
                     .addValue(DashboardExtractorConstants.PARAM_LAST_MODIFIED_TIME, now);
             namedParameterJdbcTemplate.update(IngestionSummaryQueryBuilder.INSERT_LEGACY_JOB_QUERY, params);
 
-            log.debug("Inserted legacy job {} for tenant {} module {} range [{} to {}]", id, tenantId, moduleName, sDate, eDate);
+            log.debug("Inserted legacy job {} for tenant {} module {} range [{} to {}]", legacyJobId, tenantId, moduleName, effectiveStartDate, effectiveEndDate);
         } catch (Exception exception) {
             log.error("Failed to insert legacy job for tenant {} module {} range [{} to {}]", tenantId, moduleName, startDate, endDate, exception);
         }
@@ -184,24 +184,31 @@ public class JdbcIngestionPersistenceServiceImpl implements IngestionPersistence
             MapSqlParameterSource[] batchParams = new MapSqlParameterSource[details.size()];
             java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern(DashboardExtractorConstants.DATE_FORMAT);
 
-            for (int i = 0; i < details.size(); i++) {
-                Object item = details.get(i);
-                if (item instanceof org.upyog.dashboard.entity.DailyIngestionData d) {
-                    LocalDate pushDate = (d.getPushDate() != null) ? LocalDate.parse(d.getPushDate(), formatter) : LocalDate.now();
-                    batchParams[i] = new MapSqlParameterSource()
-                            .addValue("moduleIngestionId", (d.getModuleIngestionId() != null) ? d.getModuleIngestionId() : CommonUtils.generateUUID())
-                            .addValue("moduleDetailId", d.getModuleDetailId())
-                            .addValue("tenantId", d.getTenantId())
-                            .addValue("moduleName", d.getModuleName())
-                            .addValue("pushDate", Date.valueOf(pushDate))
-                            .addValue("requestData", d.getRequestData())
-                            .addValue("responseData", d.getResponseData())
-                            .addValue("ingestionStatus", d.getIngestionStatus())
+            for (int detailIndex = 0; detailIndex < details.size(); detailIndex++) {
+                Object detailItem = details.get(detailIndex);
+                if (detailItem instanceof org.upyog.dashboard.entity.DailyIngestionData dailyIngestionRecord) {
+                    // pushDate is formatted as dd-MM-yyyy by DailyIngestionService and LegacyBatchIngestionOrchestrator;
+                    // fallback to LocalDate.now() only if pushDate string is not provided.
+                    LocalDate effectivePushDate = (dailyIngestionRecord.getPushDate() != null) 
+                            ? LocalDate.parse(dailyIngestionRecord.getPushDate(), formatter) 
+                            : LocalDate.now();
+
+                    batchParams[detailIndex] = new MapSqlParameterSource()
+                            .addValue("moduleIngestionId", (dailyIngestionRecord.getModuleIngestionId() != null) 
+                                    ? dailyIngestionRecord.getModuleIngestionId() 
+                                    : CommonUtils.generateUUID())
+                            .addValue("moduleDetailId", dailyIngestionRecord.getModuleDetailId())
+                            .addValue("tenantId", dailyIngestionRecord.getTenantId())
+                            .addValue("moduleName", dailyIngestionRecord.getModuleName())
+                            .addValue("pushDate", Date.valueOf(effectivePushDate))
+                            .addValue("requestData", dailyIngestionRecord.getRequestData())
+                            .addValue("responseData", dailyIngestionRecord.getResponseData())
+                            .addValue("ingestionStatus", dailyIngestionRecord.getIngestionStatus())
                             .addValue("exceptionCode", null)
-                            .addValue("createdBy", (d.getCreatedBy() != null) ? d.getCreatedBy() : SYSTEM_USER)
-                            .addValue("createdTime", (d.getCreatedTime() != null) ? d.getCreatedTime() : CommonUtils.getCurrentEpochMillis())
-                            .addValue("lastModifiedBy", (d.getLastModifiedBy() != null) ? d.getLastModifiedBy() : SYSTEM_USER)
-                            .addValue("lastModifiedTime", (d.getLastModifiedTime() != null) ? d.getLastModifiedTime() : CommonUtils.getCurrentEpochMillis());
+                            .addValue("createdBy", (dailyIngestionRecord.getCreatedBy() != null) ? dailyIngestionRecord.getCreatedBy() : SYSTEM_USER)
+                            .addValue("createdTime", (dailyIngestionRecord.getCreatedTime() != null) ? dailyIngestionRecord.getCreatedTime() : CommonUtils.getCurrentEpochMillis())
+                            .addValue("lastModifiedBy", (dailyIngestionRecord.getLastModifiedBy() != null) ? dailyIngestionRecord.getLastModifiedBy() : SYSTEM_USER)
+                            .addValue("lastModifiedTime", (dailyIngestionRecord.getLastModifiedTime() != null) ? dailyIngestionRecord.getLastModifiedTime() : CommonUtils.getCurrentEpochMillis());
                 }
             }
 

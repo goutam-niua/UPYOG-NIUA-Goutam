@@ -204,11 +204,13 @@ public class LegacyIngestionService {
 	 */
 	private String serializeRequest(Module module, ModuleExtractor<?> extractor, LocalDate date) {
 		try {
+			log.info("Serializing request payload for module {} on date {}", module, date);
 			Object rawData = extractor.extractData(date);
 			Object requestRawData = rawData instanceof DashboardData dashboardData ? List.of(dashboardData) : rawData;
 			DashboardRequest request = DashboardRequest.builder().module(module).rawData(requestRawData).build();
 			return objectMapper.writeValueAsString(request);
-		} catch (Exception e) {
+		} catch (Exception exception) {
+			log.error("Failed to serialize request payload for module {} on date {}", module, date, exception);
 			return "{}";
 		}
 	}
@@ -313,6 +315,7 @@ public class LegacyIngestionService {
 		try {
 			return objectMapper.writeValueAsString(java.util.Map.of("error", input));
 		} catch (Exception exception) {
+			log.error("LegacyIngestionService | Failed to serialize error string to JSON: {}", input, exception);
 			return "{\"error\":\"" + input.replace("\"", "\\\"").replace("\\n", " ") + "\"}";
 		}
 	}

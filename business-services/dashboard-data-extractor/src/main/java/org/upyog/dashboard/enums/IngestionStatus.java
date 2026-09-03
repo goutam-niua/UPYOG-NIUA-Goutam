@@ -26,11 +26,22 @@ public enum IngestionStatus {
     private final String value;
     private final boolean isSuccessfulState;
 
+    /**
+     * Constructs an IngestionStatus enum constant with its wire representation and success flag.
+     *
+     * @param value             string value representing the status in database and JSON
+     * @param isSuccessfulState flag indicating if this state represents an overall successful outcome
+     */
     IngestionStatus(String value, boolean isSuccessfulState) {
         this.value = value;
         this.isSuccessfulState = isSuccessfulState;
     }
 
+    /**
+     * Returns the raw string value representing the ingestion status.
+     *
+     * @return status string representation
+     */
     @JsonValue
     public String getValue() {
         return value;
@@ -48,9 +59,9 @@ public enum IngestionStatus {
         if (StringUtils.isBlank(status)) {
             return UNKNOWN;
         }
-        for (IngestionStatus s : values()) {
-            if (s.value.equalsIgnoreCase(status.trim())) {
-                return s;
+        for (IngestionStatus ingestionStatus : values()) {
+            if (ingestionStatus.value.equalsIgnoreCase(status.trim())) {
+                return ingestionStatus;
             }
         }
         return UNKNOWN;
